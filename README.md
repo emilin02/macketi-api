@@ -1,0 +1,2 @@
+# macketi-api
+fastAPI + postgreSQL

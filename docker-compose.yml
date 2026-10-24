@@ -1,0 +1,48 @@
+# ============================================================
+# DOCKER COMPOSE - ENTORNO DE DESARROLLO
+# ============================================================
+# Levanta PostgreSQL y Redis para desarrollo local.
+#
+# Uso:
+#   docker compose up -d        # Arranca los servicios en segundo plano
+#   docker compose logs -f      # Ver logs
+#   docker compose down         # Parar y eliminar contenedores
+#   docker compose down -v      # Parar y eliminar también los volúmenes (borra datos)
+
+services:
+  # ==========================================================
+  # POSTGRESQL
+  # ==========================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: macketi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: macketi
+      POSTGRES_PASSWORD: macketi_dev_password
+      POSTGRES_DB: macketi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U macketi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================
+  # REDIS (para caché y sesiones)
+  # ==========================================================
+  redis:
+    image: redis:7-alpine
+    container_name: macketi-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
