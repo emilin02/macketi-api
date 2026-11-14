@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,20 +30,18 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 async def _generate_order_number(db: AsyncSession) -> str:
     """
-    Genera un número de pedido único en formato MK-YYYY-NNNNN.
-    Cuenta los pedidos del año actual y suma 1.
+    Genera un número de pedido único en formato MK-YYYY-NNNNN
+    utilizando una secuencia de PostgreSQL.
     """
     year = datetime.now(timezone.utc).year
-    prefix = f"MK-{year}-"
 
-    # Contar pedidos del año actual.
     result = await db.execute(
-        select(func.count(Order.id))
-        .where(Order.order_number.like(f"{prefix}%"))
+        text("SELECT nextval('order_number_seq')")
     )
-    count = result.scalar() or 0
 
-    return f"{prefix}{count + 1:05d}"
+    sequence_number = result.scalar_one()
+
+    return f"MK-{year}-{sequence_number:05d}"
 
 
 # ============================================================
@@ -72,10 +70,10 @@ async def create_order(
     # 1. Validar la dirección de envío.
     # ----------------------------------------------------------
     result = await db.execute(
-        select(Address)
-        .where(Address.id == data.shipping_address_id)
-        .where(Address.user_id == current_user.id)
-        .where(Address.deleted_at.is_(None))
+        select(Offer)
+        .where(Offer.id == item_data.offer_id)
+        .where(Offer.deleted_at.is_(None))
+        .with_for_update(of=Offer)
     )
     address = result.scalar_one_or_none()
 
@@ -85,13 +83,27 @@ async def create_order(
             detail="Dirección de envío no encontrada",
         )
 
+    # Validar que no existan ofertas repetidas.
+    offer_ids = [item.offer_id for item in data.items]
+
+    if len(offer_ids) != len(set(offer_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se permiten ofertas repetidas en un mismo pedido",
+        )
+
+
+
     # ----------------------------------------------------------
     # 2. Validar las ofertas y calcular totales.
     # ----------------------------------------------------------
     subtotal = 0.0
     order_items_to_create: list[dict] = []
 
-    for item_data in data.items:
+    for item_data in sorted(
+        data.items,
+        key=lambda item: item.offer_id
+    ):
         # Buscar la oferta.
         result = await db.execute(
             select(Offer)
